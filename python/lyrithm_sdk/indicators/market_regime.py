@@ -1,0 +1,163 @@
+# Copyright 2026 Jay Cheng
+# Licensed under the Apache License, Version 2.0 (see LICENSE).
+"""Market regime classifier: ADX level + ATR ratio + Bollinger Band width."""
+from __future__ import annotations
+
+import math
+from collections import deque
+from enum import Enum
+from typing import Any, Dict
+
+
+class Regime(Enum):
+    STRONG_TREND = "STRONG_TREND"
+    MODERATE_TREND = "MODERATE_TREND"
+    LOW_VOLATILITY_RANGE = "LOW_VOLATILITY_RANGE"
+    HIGH_VOLATILITY_RANGE = "HIGH_VOLATILITY_RANGE"
+
+
+class MarketRegime:
+    """ADX-driven trend classification, with ATR-ratio / BB-width tiebreakers
+    for the ranging regimes. Matches vegas-core MarketRegime.java numerics."""
+
+    ATR_HISTORY_PERIOD = 50
+
+    def __init__(
+        self,
+        strong_trend_threshold: float = 40.0,
+        moderate_trend_threshold: float = 25.0,
+        atr_period: int = 14,
+        bb_period: int = 20,
+        bb_multiplier: float = 2.0,
+    ):
+        self.strong_trend_threshold = strong_trend_threshold
+        self.moderate_trend_threshold = moderate_trend_threshold
+        self.atr_period = atr_period
+        self.bb_period = bb_period
+        self.bb_multiplier = bb_multiplier
+
+        self.tr_values: deque = deque(maxlen=atr_period)
+        self.close_prices: deque = deque(maxlen=bb_period)
+        self.atr_history: deque = deque(maxlen=self.ATR_HISTORY_PERIOD)
+
+        self.atr = 0.0
+        self.sma = 0.0
+        self.bb_width = 0.0
+        self.current_regime = Regime.LOW_VOLATILITY_RANGE
+        self.ready = False
+        self.count = 0
+        self.prev_close = 0.0
+
+    def update(self, candle, adx_value: float) -> None:
+        high = candle.get("high") if isinstance(candle, dict) else candle.high
+        low = candle.get("low") if isinstance(candle, dict) else candle.low
+        close = candle.get("close") if isinstance(candle, dict) else candle.close
+
+        self.count += 1
+
+        if self.count == 1:
+            tr = high - low
+            self.prev_close = close
+        else:
+            tr = max(high - low, abs(high - self.prev_close), abs(low - self.prev_close))
+            self.prev_close = close
+
+        self.tr_values.append(tr)
+        if len(self.tr_values) >= self.atr_period:
+            self.atr = sum(self.tr_values) / len(self.tr_values)
+            self.atr_history.append(self.atr)
+
+        self.close_prices.append(close)
+        if len(self.close_prices) >= self.bb_period:
+            self.sma = sum(self.close_prices) / len(self.close_prices)
+            variance = sum((p - self.sma) ** 2 for p in self.close_prices) / len(self.close_prices)
+            std_dev = math.sqrt(variance)
+            upper = self.sma + (self.bb_multiplier * std_dev)
+            lower = self.sma - (self.bb_multiplier * std_dev)
+            self.bb_width = (upper - lower) / self.sma * 100.0 if self.sma > 0 else 0.0
+
+        if self.count >= max(self.atr_period, self.bb_period):
+            self.ready = True
+            self.current_regime = self._classify_regime(adx_value)
+
+    def _classify_regime(self, adx_value: float) -> Regime:
+        if adx_value >= self.strong_trend_threshold:
+            return Regime.STRONG_TREND
+        if adx_value >= self.moderate_trend_threshold:
+            return Regime.MODERATE_TREND
+        avg_atr = self._get_average_atr()
+        atr_ratio = self.atr / avg_atr if avg_atr > 0 else 1.0
+        if atr_ratio > 1.3 or self.bb_width > 6.0:
+            return Regime.HIGH_VOLATILITY_RANGE
+        return Regime.LOW_VOLATILITY_RANGE
+
+    def _get_average_atr(self) -> float:
+        if not self.atr_history:
+            return self.atr
+        return sum(self.atr_history) / len(self.atr_history)
+
+    def get_current_regime(self) -> Regime:
+        return self.current_regime
+
+    def should_pause_trading(self) -> bool:
+        return self.current_regime == Regime.HIGH_VOLATILITY_RANGE
+
+    def is_ready(self) -> bool:
+        return self.ready
+
+    def get_atr(self) -> float:
+        return self.atr
+
+    def get_bb_width(self) -> float:
+        return self.bb_width
+
+    def get_atr_ratio(self) -> float:
+        avg = self._get_average_atr()
+        return self.atr / avg if avg > 0 else 1.0
+
+    def reset(self) -> None:
+        self.tr_values.clear()
+        self.close_prices.clear()
+        self.atr_history.clear()
+        self.atr = 0.0
+        self.sma = 0.0
+        self.bb_width = 0.0
+        self.current_regime = Regime.LOW_VOLATILITY_RANGE
+        self.ready = False
+        self.count = 0
+        self.prev_close = 0.0
+
+    def export_state(self) -> Dict[str, Any]:
+        return {
+            "atr": self.atr,
+            "sma": self.sma,
+            "bbWidth": self.bb_width,
+            "currentRegime": self.current_regime.name,
+            "ready": self.ready,
+            "count": self.count,
+            "prevClose": self.prev_close,
+            "trValues": list(self.tr_values),
+            "closePrices": list(self.close_prices),
+            "atrHistory": list(self.atr_history),
+        }
+
+    def import_state(self, state: Dict[str, Any]) -> None:
+        self.atr = float(state["atr"])
+        self.sma = float(state["sma"])
+        self.bb_width = float(state["bbWidth"])
+        self.current_regime = Regime[state["currentRegime"]]
+        self.ready = bool(state["ready"])
+        self.count = int(state["count"])
+        self.prev_close = float(state["prevClose"])
+
+        self.tr_values.clear()
+        for v in state.get("trValues", []) or []:
+            self.tr_values.append(float(v))
+
+        self.close_prices.clear()
+        for v in state.get("closePrices", []) or []:
+            self.close_prices.append(float(v))
+
+        self.atr_history.clear()
+        for v in state.get("atrHistory", []) or []:
+            self.atr_history.append(float(v))

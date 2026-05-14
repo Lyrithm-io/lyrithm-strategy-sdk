@@ -1,0 +1,16 @@
+name: ema-cross
+display_name: "EMA Cross — Minimal Example"
+language: python
+entrypoint: strategy.py
+version: 0.1.0
+description: "Trivial EMA crossover demo. Long when fast crosses above slow; short when fast crosses below."
+author: "Lyrithm Examples"
+tags: [example, beginner, trend-following]
+source_visibility: open
+config_schema: config_schema.json
+default_config:
+  ema_fast: 12
+  ema_slow: 26
+  stop_atr_mult: 1.5
+  reward_ratio: 2.0
+  leverage: 5

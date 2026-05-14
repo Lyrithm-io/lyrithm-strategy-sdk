@@ -1,0 +1,9 @@
+Lyrithm Strategy SDK
+Copyright 2026 Jay Cheng
+
+This product includes software developed for the Lyrithm strategy platform.
+
+Some indicator implementations (EMA, ADX, MarketRegime) in
+python/lyrithm_sdk/indicators/ are ported from the Lyrithm sandbox
+project's lyrithm_strategy_kit package and remain under the Apache
+License 2.0 with the same copyright.

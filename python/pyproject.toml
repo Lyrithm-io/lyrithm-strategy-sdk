@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lyrithm-sdk"
+version = "0.1.0"
+description = "SDK for authoring, testing, and publishing trading strategies on the Lyrithm platform."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Jay Cheng", email = "jaysc19990909@gmail.com" }]
+keywords = ["trading", "strategy", "lyrithm", "backtest", "algotrading"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.0",
+    "click>=8.1",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4", "pytest-cov>=4.1"]
+dev  = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.4", "mypy>=1.10"]
+
+[project.urls]
+Homepage      = "https://lyrithm.com"
+Documentation = "https://docs.lyrithm.com/sdk"
+Repository    = "https://github.com/lyrithm/lyrithm-strategy-sdk"
+Issues        = "https://github.com/lyrithm/lyrithm-strategy-sdk/issues"
+
+[project.scripts]
+lyrithm = "lyrithm_sdk.cli.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lyrithm_sdk"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

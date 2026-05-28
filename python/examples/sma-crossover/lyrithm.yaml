@@ -1,0 +1,21 @@
+name: sma-crossover
+display_name: "SMA Crossover — Day 1 Personal Edition strategy"
+language: python
+entrypoint: strategy.py
+version: 0.1.0
+description: |
+  Simple moving-average crossover. Long on fast-above-slow, short on
+  fast-below-slow, ATR-multiple stop loss. Bundled with Lyrithm Personal
+  Edition as the canonical entry-level strategy — fork it, change the
+  periods, and run.
+author: "Lyrithm Examples"
+tags: [example, beginner, trend-following, personal-bundled]
+source_visibility: open
+config_schema: config_schema.json
+default_config:
+  sma_fast: 20
+  sma_slow: 50
+  atr_period: 14
+  stop_atr_mult: 2.0
+  reward_ratio: 2.0
+  leverage: 5

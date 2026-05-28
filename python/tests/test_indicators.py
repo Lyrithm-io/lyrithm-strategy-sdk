@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from lyrithm_sdk import Candle
-from lyrithm_sdk.indicators import ADX, ATR, EMA, MarketRegime, Regime
+from lyrithm_sdk.indicators import ADX, ATR, EMA, SMA, MarketRegime, Regime
 
 
 def _candle(t: int, o: float, h: float, l: float, c: float, v: float = 1000.0) -> Candle:
@@ -48,6 +48,60 @@ def test_ema_export_import_state_roundtrip():
 def test_ema_invalid_period():
     with pytest.raises(ValueError):
         EMA(0)
+
+
+# ============================================================
+# SMA — added in S4 alongside the sma-crossover example
+# ============================================================
+
+
+def test_sma_not_ready_until_window_filled():
+    sma = SMA(4)
+    for p in [10.0, 11.0, 12.0]:
+        sma.update(p)
+        assert not sma.is_ready()
+    sma.update(13.0)
+    assert sma.is_ready()
+    assert sma.get_value() == pytest.approx(11.5)
+
+
+def test_sma_window_evicts_oldest_after_full():
+    sma = SMA(3)
+    for p in [10.0, 20.0, 30.0]:
+        sma.update(p)
+    assert sma.get_value() == pytest.approx(20.0)
+    sma.update(60.0)   # evicts 10, window = [20, 30, 60]
+    assert sma.get_value() == pytest.approx((20 + 30 + 60) / 3.0)
+
+
+def test_sma_reset_clears_state():
+    sma = SMA(2)
+    sma.update(5.0)
+    sma.update(7.0)
+    assert sma.is_ready()
+    sma.reset()
+    assert not sma.is_ready()
+    assert sma.get_value() == 0.0
+
+
+def test_sma_export_import_state_roundtrip():
+    a = SMA(4)
+    for p in [10.0, 12.0, 11.0, 13.0, 14.0, 15.0]:
+        a.update(p)
+    b = SMA(4)
+    b.import_state(a.export_state())
+    assert b.is_ready()
+    assert b.get_value() == pytest.approx(a.get_value())
+    # Subsequent update on b advances independently
+    b.update(20.0)
+    assert b.get_value() != a.get_value()
+
+
+def test_sma_invalid_period():
+    with pytest.raises(ValueError):
+        SMA(0)
+    with pytest.raises(ValueError):
+        SMA(-3)
 
 
 def test_adx_warms_up_then_produces_positive_value():

@@ -9,5 +9,6 @@ from .adx import ADX
 from .atr import ATR
 from .ema import EMA
 from .market_regime import MarketRegime, Regime
+from .sma import SMA
 
-__all__ = ["EMA", "ADX", "ATR", "MarketRegime", "Regime"]
+__all__ = ["EMA", "SMA", "ADX", "ATR", "MarketRegime", "Regime"]

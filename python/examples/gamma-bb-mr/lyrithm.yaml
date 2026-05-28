@@ -1,0 +1,27 @@
+name: gamma-bb-mr
+display_name: "Lyrid γ · Bollinger Mean-Reversion (Sulafat)"
+language: python
+entrypoint: strategy.py
+version: 0.1.0
+description: |
+  Open-source mean-reversion strategy in the Lyrid γ lineage (Sulafat,
+  γ Lyrae — the anchor at the parallelogram base of Lyra). Long-only:
+  buys when price tags the lower Bollinger Band AND RSI is oversold
+  AND the broader trend is intact AND the regime is range-bound (not
+  trending). Fixed-percent stop and take-profit. Defaults match the
+  Pine reference source — fork freely.
+author: "Lyrithm Stargazer"
+tags: [mean-reversion, bollinger, rsi, lyrid-gamma, range-bound, long-only]
+source_visibility: open
+config_schema: config_schema.json
+default_config:
+  bb_length: 20
+  bb_stdev: 2.0
+  rsi_period: 14
+  rsi_oversold: 40
+  ema_length: 100
+  trend_buffer: 0.95
+  range_band_pct: 0.08
+  stop_loss_pct: 0.025
+  take_profit_pct: 0.05
+  leverage: 5

@@ -1,0 +1,21 @@
+name: donchian-breakout
+display_name: "Donchian Breakout — Turtle-style channel breakout"
+language: python
+entrypoint: strategy.py
+version: 0.1.0
+description: |
+  Long on close above the prior N-candle high, short on close below the
+  prior N-candle low. Trailing stop sits at the opposite-side Donchian
+  boundary widened by ATR × multiplier so a single bad bar doesn't flip
+  the trade. Pairs with sma-crossover (trend MA) and rsi-mean-reversion
+  (fade) for a balanced bundled triad.
+author: "Lyrithm Examples"
+tags: [example, intermediate, breakout, donchian, turtle, trend-following]
+source_visibility: open
+config_schema: config_schema.json
+default_config:
+  channel_period: 20
+  atr_period: 14
+  stop_atr_mult: 1.5
+  reward_ratio: 3.0
+  leverage: 5

@@ -1,0 +1,23 @@
+{
+  "title": "MACD Divergence",
+  "groups": [
+    {
+      "name": "MACD",
+      "fields": {
+        "macd_fast":            { "type": "integer", "min": 2,  "max": 100, "default": 12, "label": "MACD fast EMA",       "tunable": true },
+        "macd_slow":            { "type": "integer", "min": 3,  "max": 200, "default": 26, "label": "MACD slow EMA",       "tunable": true },
+        "macd_signal":          { "type": "integer", "min": 2,  "max": 50,  "default": 9,  "label": "Signal-line EMA",     "tunable": true },
+        "divergence_lookback":  { "type": "integer", "min": 4,  "max": 100, "default": 20, "label": "Divergence window",   "tunable": true }
+      }
+    },
+    {
+      "name": "ATR + Risk",
+      "fields": {
+        "atr_period":    { "type": "integer", "min": 2,   "max": 100,  "default": 14,  "label": "ATR period",   "tunable": true },
+        "stop_atr_mult": { "type": "number",  "min": 0.1, "max": 10.0, "default": 2.0, "label": "Stop = ATR ×", "tunable": true },
+        "reward_ratio":  { "type": "number",  "min": 0.5, "max": 10.0, "default": 2.5, "label": "Reward Ratio", "tunable": true },
+        "leverage":      { "type": "integer", "min": 1,   "max": 50,   "default": 3,   "label": "Leverage",     "tunable": true }
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "title": "Donchian Breakout",
+  "groups": [
+    {
+      "name": "Channel",
+      "fields": {
+        "channel_period": { "type": "integer", "min": 2, "max": 200, "default": 20, "label": "Channel period (bars)", "tunable": true }
+      }
+    },
+    {
+      "name": "ATR + Risk",
+      "fields": {
+        "atr_period":    { "type": "integer", "min": 2,   "max": 100,  "default": 14,  "label": "ATR period",   "tunable": true },
+        "stop_atr_mult": { "type": "number",  "min": 0.1, "max": 10.0, "default": 1.5, "label": "Stop = ATR ×", "tunable": true },
+        "reward_ratio":  { "type": "number",  "min": 0.5, "max": 10.0, "default": 3.0, "label": "Reward Ratio", "tunable": true },
+        "leverage":      { "type": "integer", "min": 1,   "max": 50,   "default": 5,   "label": "Leverage",     "tunable": true }
+      }
+    }
+  ]
+}

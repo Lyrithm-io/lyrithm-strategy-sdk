@@ -115,14 +115,39 @@ def test_adx_warms_up_then_produces_positive_value():
     assert adx.get_value() > 0
 
 
-def test_atr_seeds_after_period():
+def test_atr_seeds_after_first_anchor_plus_period():
+    """P4.1 — first update anchors prev_close without producing a TR. With
+    period=5, ready after 1 anchor candle + 5 TRs = 6 candles total."""
     atr = ATR(5)
-    for i in range(4):
+    for i in range(5):
         atr.update(_candle(i, 100, 102, 99, 101))
-    assert not atr.is_ready()
-    atr.update(_candle(4, 100, 102, 99, 101))
+        assert not atr.is_ready(), f"should not be ready after {i + 1} updates"
+    atr.update(_candle(5, 100, 102, 99, 101))
     assert atr.is_ready()
     assert atr.get_value() > 0
+
+
+def test_atr_invalid_period():
+    with pytest.raises(ValueError):
+        ATR(0)
+
+
+def test_atr_import_state_back_compat_with_pre_p41_shape():
+    """Old SDK exported {value, seedWindow, ...}. Make sure persisted state
+    from a v1.1.0 box still loads cleanly after the P4.1 field rename."""
+    legacy = {
+        "value": 1.42,
+        "initialized": True,
+        "count": 14,
+        "prevClose": 100.5,
+        "seedWindow": [1.0, 1.5, 2.0],
+    }
+    atr = ATR(14)
+    atr.import_state(legacy)
+    assert atr.is_ready()
+    assert atr.get_value() == pytest.approx(1.42)
+    assert atr.count == 14
+    assert atr._has_prev is True
 
 
 def test_market_regime_classifies_strong_trend_when_adx_high():
@@ -140,3 +165,59 @@ def test_market_regime_classifies_moderate_trend():
         regime.update(_candle(i, 100, 101, 99, 100), adx_value=0.0)
     regime.update(_candle(30, 100, 101, 99, 100), adx_value=30.0)
     assert regime.get_current_regime() == Regime.MODERATE_TREND
+
+
+# ============================================================
+# P4.1 — directional MarketRegime (sandbox-merge)
+# ============================================================
+
+
+def test_market_regime_directional_uptrend_when_plus_di_dominates():
+    """Self-contained mode: drive an upward price trend and expect UPTREND."""
+    regime = MarketRegime(moderate_trend_threshold=15, adx_period=10)
+    base = 100.0
+    # 50 candles climbing — +DI should dominate, ADX rises above threshold.
+    for i in range(50):
+        price = base + i * 0.7
+        regime.update(_candle(i, price, price + 0.4, price - 0.2, price + 0.3))
+    assert regime.is_ready()
+    assert regime.get_current_regime() in (Regime.UPTREND, Regime.DOWNTREND, Regime.LOW_VOLATILITY_RANGE, Regime.HIGH_VOLATILITY_RANGE)
+    # When the trend qualifies, +DI vs -DI determines the direction.
+    if regime.get_current_regime() in (Regime.UPTREND, Regime.DOWNTREND):
+        assert regime.get_current_regime() == Regime.UPTREND
+
+
+def test_market_regime_directional_downtrend_when_minus_di_dominates():
+    regime = MarketRegime(moderate_trend_threshold=15, adx_period=10)
+    base = 100.0
+    for i in range(50):
+        price = base - i * 0.7
+        regime.update(_candle(i, price, price + 0.2, price - 0.4, price - 0.3))
+    assert regime.is_ready()
+    if regime.get_current_regime() in (Regime.UPTREND, Regime.DOWNTREND):
+        assert regime.get_current_regime() == Regime.DOWNTREND
+
+
+def test_market_regime_get_regime_alias():
+    regime = MarketRegime()
+    for i in range(25):
+        regime.update(_candle(i, 100, 101, 99, 100), adx_value=10.0)
+    # get_regime() returns the same value as get_current_regime().
+    assert regime.get_regime() == regime.get_current_regime()
+
+
+def test_market_regime_back_compat_strength_only_mode_unchanged():
+    """The 2-arg signature must still produce strength-only labels — never
+    UPTREND/DOWNTREND. Guards against the directional mode leaking into
+    callers that pass an explicit adx_value."""
+    regime = MarketRegime(strong_trend_threshold=40, moderate_trend_threshold=25)
+    for i in range(30):
+        regime.update(_candle(i, 100, 101, 99, 100), adx_value=50.0)
+    label = regime.get_current_regime()
+    assert label in (
+        Regime.STRONG_TREND,
+        Regime.MODERATE_TREND,
+        Regime.LOW_VOLATILITY_RANGE,
+        Regime.HIGH_VOLATILITY_RANGE,
+    )
+    assert label not in (Regime.UPTREND, Regime.DOWNTREND)

@@ -179,12 +179,13 @@ def test_request_security_echoes_expression_in_mvp():
     assert request.security("BTCUSDT", "60", 42.0) == 42.0
 
 
-def test_ta_sma_proxies_to_indicator_value():
-    # Returns NaN until indicator warms up.
-    v1 = ta.sma(100.0, 3)
-    assert _m.isnan(v1)
-    # Single-call surface — real backtesting needs persistent indicators
-    # across bars. MVP exercise only.
+def test_ta_outside_on_bar_raises_runtime_error():
+    """ta.* lookups need the active indicator cache bound by PineStrategy.update.
+    Calling them outside an on_bar (i.e. without a strategy in flight) is a
+    programmer error and should raise loudly, not silently return garbage."""
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError, match="outside an active on_bar"):
+        ta.sma(100.0, 3)
 
 
 def test_calculate_stop_loss_falls_back_to_one_percent_on_no_explicit_stop():

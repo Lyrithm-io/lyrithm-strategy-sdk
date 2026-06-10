@@ -160,54 +160,215 @@ class _PersistentStore:
 
 
 # ============================================================
+# Per-call-site indicator + cross-state cache.
+#
+# Pine indicators are stateful: `ta.sma(close, 14)` at line 5 keeps
+# accumulating across bars, separate from `ta.sma(close, 14)` at
+# line 10. The runtime needs to distinguish call sites and persist
+# one indicator instance per (caller_filename, caller_lineno,
+# indicator_kind, params) tuple.
+#
+# We key on the calling frame's filename + lineno via sys._getframe,
+# same approach Python's stdlib logging module uses for `Caller`.
+# ============================================================
+
+class _IndicatorCache:
+    """Per-PineStrategy-instance store mapping call-site identity to
+    persistent indicator state (SMA / EMA / RSI / ATR objects, plus
+    rolling buffers for highest / lowest, plus prev-bar pairs for
+    crossover / crossunder)."""
+
+    def __init__(self):
+        self._store: Dict[tuple, Any] = {}
+
+    def get_or_create(self, key: tuple, factory: Callable[[], Any]) -> Any:
+        if key not in self._store:
+            self._store[key] = factory()
+        return self._store[key]
+
+    def get(self, key: tuple, default=None) -> Any:
+        return self._store.get(key, default)
+
+    def set(self, key: tuple, value: Any) -> None:
+        self._store[key] = value
+
+
+def _caller_site_key(depth: int = 2) -> tuple:
+    """Return (filename, lineno) for the frame `depth` levels up the stack.
+    `depth=2` skips this helper + the ta.* shim method, landing on the
+    generated-code line that called ta.sma / ta.ema / etc.
+
+    Falls back to a stable but unique sentinel when frame introspection
+    fails (some PyPy / Cython embeddings don't provide frames)."""
+    import sys
+    try:
+        f = sys._getframe(depth)
+        return (f.f_code.co_filename, f.f_lineno)
+    except (ValueError, AttributeError):
+        return ("<frameless>", 0)
+
+
+# ============================================================
 # ta / math / strategy / request / input namespace shims.
 # These are PLAIN OBJECTS exposed via __all__ — the generated
 # Python imports them as if they were submodules.
 # ============================================================
 
+_active_indicator_cache: Optional["_IndicatorCache"] = None
+_active_candle: Optional[Candle] = None
+
+
+def _require_indicator_cache() -> "_IndicatorCache":
+    if _active_indicator_cache is None:
+        raise RuntimeError(
+            "pine_runtime: ta.* called outside an active on_bar — the cache "
+            "is per-strategy-instance and only valid while a PineStrategy.update "
+            "is in flight"
+        )
+    return _active_indicator_cache
+
+
 class _TaNamespace:
-    """Pine `ta.*` shim. Indicators are cached per-call-site keyed by their
-    source-expression-identity-on-line. For the MVP we just rebuild
-    per-call and return the stub `.get_value()` of a freshly-fed indicator,
-    which is wrong for real backtesting but correct enough to validate the
-    emitted code's surface."""
+    """Pine `ta.*` shim with proper per-call-site state persistence.
+
+    Each call site (identified by the caller frame's filename + line number)
+    keeps its own indicator instance across bars, so repeated ``ta.sma(close, 14)``
+    calls at the same source line accumulate values correctly. Two ``ta.sma(close, 14)``
+    calls on different lines are distinct indicators — matching Pine semantics
+    where indicator state is tied to the syntactic call site.
+
+    Cross-bar semantics for ``crossover / crossunder`` track the previous-bar
+    operand pair per call site, and ``highest / lowest`` keep a rolling window
+    of the last N inputs."""
 
     def sma(self, source: float, length: int) -> float:
-        ind = SMA(int(length))
+        site = _caller_site_key()
+        key = ("sma", site, int(length))
+        cache = _require_indicator_cache()
+        ind = cache.get_or_create(key, lambda: SMA(int(length)))
         ind.update(float(source))
         return ind.get_value() if ind.is_ready() else float("nan")
 
     def ema(self, source: float, length: int) -> float:
-        ind = EMA(int(length))
+        site = _caller_site_key()
+        key = ("ema", site, int(length))
+        cache = _require_indicator_cache()
+        ind = cache.get_or_create(key, lambda: EMA(int(length)))
         ind.update(float(source))
         return ind.get_value() if ind.is_ready() else float("nan")
 
     def rsi(self, source: float, length: int) -> float:
-        ind = RSI(int(length))
+        site = _caller_site_key()
+        key = ("rsi", site, int(length))
+        cache = _require_indicator_cache()
+        ind = cache.get_or_create(key, lambda: RSI(int(length)))
         ind.update(float(source))
         return ind.get_value() if ind.is_ready() else float("nan")
 
     def atr(self, length: int) -> float:
-        # Real ATR needs the candle, not just a single value — generated code
-        # may call ta.atr(N) and rely on the runtime to grab the active
-        # candle. For MVP we look it up via the active history buffer.
-        return float("nan")
+        """Pine ``ta.atr(N)`` returns the N-bar Average True Range. Unlike
+        ``ta.sma / ta.ema`` it needs the full Candle (high/low/close), not
+        just a single value — we pull the active candle bound by
+        PineStrategy.update."""
+        if _active_candle is None:
+            return float("nan")
+        site = _caller_site_key()
+        key = ("atr", site, int(length))
+        cache = _require_indicator_cache()
+        ind = cache.get_or_create(key, lambda: ATR(int(length)))
+        ind.update(_active_candle)
+        return ind.get_value() if ind.is_ready() else float("nan")
 
     def crossover(self, a: float, b: float) -> bool:
-        # Real Pine crossover compares current vs previous bar. MVP just
-        # returns a > b which is "is currently above"; ok for syntax
-        # validation but not semantically correct for backtesting.
-        return float(a) > float(b)
+        """Pine ``ta.crossover(a, b)`` — True only when ``a`` crossed from
+        below to above ``b`` on this bar. Requires previous-bar values, so
+        we track the (prev_a, prev_b) pair per call site."""
+        site = _caller_site_key()
+        key = ("crossover_prev", site)
+        cache = _require_indicator_cache()
+        prev = cache.get(key)
+        a_f, b_f = float(a), float(b)
+        crossed = (
+            prev is not None
+            and prev[0] is not None
+            and prev[1] is not None
+            and prev[0] <= prev[1]
+            and a_f > b_f
+        )
+        cache.set(key, (a_f, b_f))
+        return crossed
 
     def crossunder(self, a: float, b: float) -> bool:
-        return float(a) < float(b)
+        site = _caller_site_key()
+        key = ("crossunder_prev", site)
+        cache = _require_indicator_cache()
+        prev = cache.get(key)
+        a_f, b_f = float(a), float(b)
+        crossed = (
+            prev is not None
+            and prev[0] is not None
+            and prev[1] is not None
+            and prev[0] >= prev[1]
+            and a_f < b_f
+        )
+        cache.set(key, (a_f, b_f))
+        return crossed
 
     def highest(self, source: float, length: int) -> float:
-        # MVP: returns source itself. Real impl needs a window buffer.
-        return float(source)
+        """Rolling window max over the last `length` updates."""
+        site = _caller_site_key()
+        key = ("highest_window", site, int(length))
+        cache = _require_indicator_cache()
+        window: List[float] = cache.get_or_create(key, lambda: [])
+        window.append(float(source))
+        if len(window) > int(length):
+            del window[: len(window) - int(length)]
+        if len(window) < int(length):
+            return float("nan")
+        import builtins as _b
+        return _b.max(window)
 
     def lowest(self, source: float, length: int) -> float:
-        return float(source)
+        site = _caller_site_key()
+        key = ("lowest_window", site, int(length))
+        cache = _require_indicator_cache()
+        window: List[float] = cache.get_or_create(key, lambda: [])
+        window.append(float(source))
+        if len(window) > int(length):
+            del window[: len(window) - int(length)]
+        if len(window) < int(length):
+            return float("nan")
+        import builtins as _b
+        return _b.min(window)
+
+    def change(self, source: float) -> float:
+        """Pine ``ta.change(src)`` — current value minus previous bar's
+        value at the same call site."""
+        site = _caller_site_key()
+        key = ("change_prev", site)
+        cache = _require_indicator_cache()
+        prev = cache.get(key)
+        src = float(source)
+        cache.set(key, src)
+        if prev is None:
+            return float("nan")
+        return src - prev
+
+    def barssince(self, condition: bool) -> int:
+        """Pine ``ta.barssince(cond)`` — bars elapsed since `cond` was last
+        True. Returns NaN-sentinel (-1) when cond has never been True."""
+        site = _caller_site_key()
+        key = ("barssince_state", site)
+        cache = _require_indicator_cache()
+        state = cache.get(key, -1)
+        if condition:
+            cache.set(key, 0)
+            return 0
+        if state < 0:
+            return -1
+        new_count = state + 1
+        cache.set(key, new_count)
+        return new_count
 
 
 class _MathNamespace:
@@ -290,16 +451,36 @@ class _StrategyNamespace:
 
 
 class _RequestNamespace:
-    """Pine `request.*` shim. `request.security(symbol, tf, expr)` in real
-    Pine pulls a value from a different symbol/timeframe context. P5.1d
-    surfaces the (symbol, tf) subscription list via the static analyzer; the
-    runtime delivery story (engine pre-feeds multi-tf candles into the
-    process) is P5.1e+ follow-up. For MVP this returns the passed-in
-    expression unchanged so emitted code at least runs."""
+    """Pine ``request.*`` shim. ``request.security(symbol, tf, expr)`` in
+    real Pine pulls a value from a different symbol/timeframe context. The
+    engine's multi-tf wiring (P5.1d full) subscribes to additional
+    (symbol, timeframe) streams via MarketDataFeed and forwards each
+    closed candle into the PineStrategy via ``feed_additional_candle()``.
+
+    The ``expression`` argument is what Pine would compute against the
+    higher-tf series — most commonly the bare built-in ``close`` (or
+    open/high/low/volume). For MVP we treat it as a hint: when the
+    multi-tf cache holds a candle for (symbol, tf), we return the
+    corresponding attribute; otherwise fall back to the passed-in value
+    so generated code keeps running while the upstream stream warms up."""
+
+    _DEFAULT_ATTR = "close"
 
     @staticmethod
-    def security(symbol: str, timeframe: str, expression):
+    def security(symbol: str, timeframe: str, expression, *, attr: Optional[str] = None):
+        cached = _read_active_mtf(symbol, timeframe, attr or _RequestNamespace._DEFAULT_ATTR)
+        if cached is not None:
+            return cached
         return expression
+
+
+_active_pine_strategy: Optional["PineStrategy"] = None
+
+
+def _read_active_mtf(symbol: str, timeframe: str, attr: str):
+    if _active_pine_strategy is None:
+        return None
+    return _active_pine_strategy.get_additional_value(symbol, timeframe, attr)
 
 
 class _InputNamespace:
@@ -430,6 +611,11 @@ class PineStrategy(Strategy):
         self._state = _SignalState()
         self._history = _HistoryBuffer()
         self._persistent = _PersistentStore()
+        self._indicators = _IndicatorCache()
+        # Multi-tf candle cache populated by feed_additional_candle — keyed
+        # by (symbol, timeframe) → latest closed Candle. request.security()
+        # reads from here on lookup; engine MarketDataFeed wires the feed.
+        self._mtf_candles: Dict[tuple, Candle] = {}
         self._last_candle: Optional[Candle] = None
         self._ready_after: int = 1  # default: ready after 1 bar
         self._bar_index = 0
@@ -437,6 +623,7 @@ class PineStrategy(Strategy):
     # ---- Strategy lifecycle ----
     def update(self, candle: Candle) -> None:
         global _active_state, _active_history, _active_persistent, _active_config
+        global _active_indicator_cache, _active_candle
         self._state.clear_pending()
         self._last_candle = candle
 
@@ -454,6 +641,10 @@ class PineStrategy(Strategy):
         _active_history = self._history
         _active_persistent = self._persistent
         _active_config = self._config
+        _active_indicator_cache = self._indicators
+        _active_candle = candle
+        global _active_pine_strategy
+        _active_pine_strategy = self
         try:
             self.on_bar(
                 candle,
@@ -470,8 +661,29 @@ class PineStrategy(Strategy):
             _active_history = None
             _active_persistent = None
             _active_config = None
+            _active_indicator_cache = None
+            _active_candle = None
+            _active_pine_strategy = None
 
         self._bar_index += 1
+
+    # ---- Multi-tf candle delivery (P5.1d engine-side wiring) ----
+    def feed_additional_candle(self, symbol: str, timeframe: str, candle: Candle) -> None:
+        """Called by the engine (via gRPC UpdateAdditional → strategy-worker-
+        python → PineStrategy) to deliver a closed candle from a non-primary
+        (symbol, timeframe) stream. The candle is cached for request.security()
+        lookups on subsequent bars."""
+        self._mtf_candles[(symbol, timeframe)] = candle
+
+    def get_additional_value(self, symbol: str, timeframe: str, attr: str = "close"):
+        """Lookup helper used by request.security(). Returns the named
+        attribute (close / open / high / low / volume) of the most recently
+        delivered candle for (symbol, timeframe), or None when no candle
+        has arrived yet."""
+        c = self._mtf_candles.get((symbol, timeframe))
+        if c is None:
+            return None
+        return getattr(c, attr, None)
 
     def is_ready(self) -> bool:
         return self._bar_index >= self._ready_after
@@ -480,6 +692,8 @@ class PineStrategy(Strategy):
         self._state = _SignalState()
         self._history = _HistoryBuffer()
         self._persistent = _PersistentStore()
+        self._indicators = _IndicatorCache()
+        self._mtf_candles = {}
         self._last_candle = None
         self._bar_index = 0
 

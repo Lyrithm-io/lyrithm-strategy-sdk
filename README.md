@@ -79,6 +79,12 @@ class EmaCross(Strategy):
 Full interface: [docs/strategy-spec.md](docs/strategy-spec.md).
 Manifest reference: [docs/lyrithm-yaml-reference.md](docs/lyrithm-yaml-reference.md).
 
+## Versioning
+
+What counts as the public API, the semver policy (pre-1.0 semantics, deprecation
+window), and the 1.0.0 promotion criteria are defined in [VERSIONING.md](VERSIONING.md).
+The Java contract jar `com.lyrithm:lyrithm-strategy-api` is covered by the same document.
+
 ## Repo layout
 
 ```

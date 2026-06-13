@@ -12,6 +12,15 @@ Sister-repo changelogs: `lyrithm-core` / `lyrithm-dashboard` / `lyrithm-sandbox`
 
 4 commits ahead of `main`'s last pushed state, queued for the next deploy wave.
 
+### Added — API-004 public API contract + semver policy (2026-06-12)
+
+- **`VERSIONING.md`** — defines the public surface (import surface, `Strategy` contract,
+  CLI, on-disk formats, indicator numeric output, persisted-state shape), the pre-1.0
+  semver policy + deprecation window, the lockstep rule with
+  `com.lyrithm:lyrithm-strategy-api`, and the 1.0.0 promotion criteria.
+- Wheel version is now single-sourced from `lyrithm_sdk.__version__` via hatchling
+  dynamic version (`pyproject.toml` no longer carries its own copy).
+
 ### Added — P5.1e Pine runtime adapter (commits `677a9a0` MVP + `7ddff34` full-pass, 2026-06-10)
 
 Bridges Pine v5 transpiled strategies (emitted by `lyrithm-core`'s `PineToPythonCodegen`) to the polled `Strategy` ABC. The codegen targets this adapter; users never import it directly.

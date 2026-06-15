@@ -115,6 +115,16 @@ def test_adx_warms_up_then_produces_positive_value():
     assert adx.get_value() > 0
 
 
+def test_adx_accepts_configurable_slope_lookback():
+    adx = ADX(14, slope_lookback=2)
+    assert adx.adx_history.maxlen == 3
+
+
+def test_adx_rejects_invalid_slope_lookback():
+    with pytest.raises(ValueError, match="slope lookback"):
+        ADX(14, slope_lookback=0)
+
+
 def test_atr_seeds_after_first_anchor_plus_period():
     """P4.1 — first update anchors prev_close without producing a TR. With
     period=5, ready after 1 anchor candle + 5 TRs = 6 candles total."""
@@ -165,6 +175,17 @@ def test_market_regime_classifies_moderate_trend():
         regime.update(_candle(i, 100, 101, 99, 100), adx_value=0.0)
     regime.update(_candle(30, 100, 101, 99, 100), adx_value=30.0)
     assert regime.get_current_regime() == Regime.MODERATE_TREND
+
+
+def test_market_regime_accepts_configurable_volatility_thresholds():
+    regime = MarketRegime(
+        atr_history_period=7,
+        atr_ratio_threshold=9.0,
+        bb_width_threshold=99.0,
+    )
+    assert regime.atr_history.maxlen == 7
+    assert regime.atr_ratio_threshold == 9.0
+    assert regime.bb_width_threshold == 99.0
 
 
 # ============================================================

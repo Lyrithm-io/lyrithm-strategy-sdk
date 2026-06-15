@@ -58,16 +58,24 @@ class MarketRegime:
         bb_period: int = 20,
         bb_multiplier: float = 2.0,
         adx_period: int = 14,
+        atr_history_period: int = ATR_HISTORY_PERIOD,
+        atr_ratio_threshold: float = 1.3,
+        bb_width_threshold: float = 6.0,
     ):
+        if atr_history_period < 1:
+            raise ValueError("ATR history period must be >= 1")
         self.strong_trend_threshold = strong_trend_threshold
         self.moderate_trend_threshold = moderate_trend_threshold
         self.atr_period = atr_period
         self.bb_period = bb_period
         self.bb_multiplier = bb_multiplier
+        self.atr_history_period = atr_history_period
+        self.atr_ratio_threshold = atr_ratio_threshold
+        self.bb_width_threshold = bb_width_threshold
 
         self.tr_values: deque = deque(maxlen=atr_period)
         self.close_prices: deque = deque(maxlen=bb_period)
-        self.atr_history: deque = deque(maxlen=self.ATR_HISTORY_PERIOD)
+        self.atr_history: deque = deque(maxlen=self.atr_history_period)
 
         self.atr = 0.0
         self.sma = 0.0
@@ -150,7 +158,7 @@ class MarketRegime:
 
         avg_atr = self._get_average_atr()
         atr_ratio = self.atr / avg_atr if avg_atr > 0 else 1.0
-        if atr_ratio > 1.3 or self.bb_width > 6.0:
+        if atr_ratio > self.atr_ratio_threshold or self.bb_width > self.bb_width_threshold:
             return Regime.HIGH_VOLATILITY_RANGE
         return Regime.LOW_VOLATILITY_RANGE
 

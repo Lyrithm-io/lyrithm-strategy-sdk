@@ -12,10 +12,13 @@ class ADX:
 
     SLOPE_LOOKBACK = 5
 
-    def __init__(self, period: int):
+    def __init__(self, period: int, slope_lookback: int = SLOPE_LOOKBACK):
         if period < 2:
             raise ValueError(f"ADX period must be >= 2, got {period}")
+        if slope_lookback < 1:
+            raise ValueError(f"ADX slope lookback must be >= 1, got {slope_lookback}")
         self.period = period
+        self.slope_lookback = slope_lookback
         self.alpha = 1.0 / period
         self.initialized = False
         self.count = 0
@@ -32,7 +35,7 @@ class ADX:
         self.dx = 0.0
         self.adx = 0.0
 
-        self.adx_history: deque = deque(maxlen=self.SLOPE_LOOKBACK + 1)
+        self.adx_history: deque = deque(maxlen=self.slope_lookback + 1)
 
     def update(self, candle) -> None:
         """Feed one candle. Accepts a Candle dataclass or a dict with

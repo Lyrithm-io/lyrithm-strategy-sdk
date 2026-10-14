@@ -6,8 +6,6 @@ parity, request.security multi-tf delivery, and varip tick semantics are
 follow-up sprints."""
 from __future__ import annotations
 
-import math as _m
-
 import pytest
 
 from lyrithm_sdk import Candle

@@ -38,6 +38,10 @@ runs as Pine intends, and the framework's poll methods
 (:meth:`check_long_entry` etc.) read the pending-signal state populated
 during ``on_bar``.
 
+A script that plots also imports ``plot`` and ``color``: ``plot()``
+records a value per bar for the chart (:meth:`PineStrategy.get_plots`)
+and never touches the signal state.
+
 This is a P5.1e MVP — sufficient to instantiate emitted code and feed
 basic candles through. Production hardening (full ta/* indicator
 coverage, request.security multi-tf delivery, varip tick semantics,
@@ -46,7 +50,7 @@ session lifetime hooks) lands in follow-up sprints.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .indicators import EMA, SMA, RSI, ATR
 from .models import Candle
@@ -63,6 +67,8 @@ __all__ = [
     "nz",
     "na",
     "persistent",
+    "plot",
+    "color",
 ]
 
 
@@ -579,6 +585,94 @@ def na(value) -> bool:
         return False
 
 
+# ============================================================
+# plot() and color.* — what the chart draws next to the candles.
+# Values are kept per bar on the PineStrategy and read back with
+# get_plots(); they never reach the signal state, so a script trades
+# the same with or without its plots.
+# ============================================================
+
+#: Plots one script may draw; further plot() calls are ignored.
+MAX_PLOTS = 16
+
+
+def _hex_rgb(value: Any) -> Optional[Tuple[int, int, int]]:
+    if not isinstance(value, str) or not value.startswith("#") or len(value) not in (7, 9):
+        return None
+    try:
+        return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
+    except ValueError:
+        return None
+
+
+def _to_hex(rgb: Tuple[int, int, int], transp: Any = 0) -> str:
+    r, g, b = (max(0, min(255, int(round(c)))) for c in rgb)
+    try:
+        t = float(transp)
+    except (TypeError, ValueError):
+        t = 0.0
+    t = max(0.0, min(100.0, t))
+    if t == 0.0:
+        return f"#{r:02X}{g:02X}{b:02X}"
+    alpha = int(round(255 * (1 - t / 100.0)))
+    return f"#{r:02X}{g:02X}{b:02X}{alpha:02X}"
+
+
+class _ColorNamespace:
+    """Pine `color.*` as hex strings: "#RRGGBB", or "#RRGGBBAA" once a
+    transparency is applied. The named colours are Pine v5's."""
+
+    aqua = "#00BCD4"
+    black = "#363A45"
+    blue = "#2196F3"
+    fuchsia = "#E040FB"
+    gray = "#787B86"
+    green = "#4CAF50"
+    lime = "#00E676"
+    maroon = "#880E4F"
+    navy = "#311B92"
+    olive = "#808000"
+    orange = "#FF9800"
+    purple = "#9C27B0"
+    red = "#FF5252"
+    silver = "#B2B5BE"
+    teal = "#00897B"
+    white = "#FFFFFF"
+    yellow = "#FFEB3B"
+
+    @staticmethod
+    def new(color, transp=0):
+        """`color.new(c, transp)` — c with 0 (opaque) .. 100 (invisible) transparency."""
+        rgb = _hex_rgb(color)
+        return color if rgb is None else _to_hex(rgb, transp)
+
+    @staticmethod
+    def rgb(red, green, blue, transp=0):
+        """`color.rgb(r, g, b, transp)`."""
+        return _to_hex((red, green, blue), transp)
+
+
+color = _ColorNamespace()
+
+
+def _plot_value(series: Any) -> Optional[float]:
+    if isinstance(series, bool) or not isinstance(series, (int, float)):
+        return None
+    import math as _m
+    value = float(series)
+    return value if _m.isfinite(value) else None
+
+
+def plot(series, title=None, color=None, linewidth=1, style=None, **kwargs):
+    """Pine `plot()` — draw `series` on the chart. The line is named by
+    `title` (untitled plots are "Plot", "Plot 2", ...); `na` leaves a gap.
+    Only the value and colour are kept: width, style and the other
+    arguments are accepted and ignored. Returns the plot's name."""
+    if _active_pine_strategy is None:
+        raise RuntimeError("pine_runtime: plot() called outside an active on_bar")
+    return _active_pine_strategy._record_plot(_caller_site_key(), series, title, color)
+
+
 def persistent(name: str, init: Callable[[], Any]):
     """Pine `var name = expr` equivalent for cases where the init expr
     references runtime values (close, candle, etc.) — the generated
@@ -619,12 +713,17 @@ class PineStrategy(Strategy):
         self._last_candle: Optional[Candle] = None
         self._ready_after: int = 1  # default: ready after 1 bar
         self._bar_index = 0
+        # plot() call site -> plot name, in the order first plotted.
+        self._plot_names: Dict[tuple, str] = {}
+        # This bar's plotted values: name -> (value, colour).
+        self._plots: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
 
     # ---- Strategy lifecycle ----
     def update(self, candle: Candle) -> None:
         global _active_state, _active_history, _active_persistent, _active_config
         global _active_indicator_cache, _active_candle
         self._state.clear_pending()
+        self._plots = {}
         self._last_candle = candle
 
         # Publish built-in series into the history buffer so history(name, n)
@@ -696,6 +795,34 @@ class PineStrategy(Strategy):
         self._mtf_candles = {}
         self._last_candle = None
         self._bar_index = 0
+        self._plot_names = {}
+        self._plots = {}
+
+    # ---- plot() ----
+    def _record_plot(self, site: tuple, series: Any, title: Any, color: Any) -> Optional[str]:
+        name = self._plot_names.get(site)
+        if name is None:
+            if len(self._plot_names) >= MAX_PLOTS:
+                return None
+            base = str(title) if title else "Plot"
+            taken = set(self._plot_names.values())
+            name, n = base, 2
+            while name in taken:
+                name, n = f"{base} {n}", n + 1
+            self._plot_names[site] = name
+        self._plots[name] = (_plot_value(series), color if isinstance(color, str) else None)
+        return name
+
+    def get_plots(self) -> List[Dict[str, Any]]:
+        """This bar's plot() values, in the order the plots first appeared:
+        ``{"name", "value", "color"}`` with ``value`` None where the plot
+        was `na` or not reached this bar, and ``color`` None for the
+        chart's default."""
+        out: List[Dict[str, Any]] = []
+        for name in self._plot_names.values():
+            value, colour = self._plots.get(name, (None, None))
+            out.append({"name": name, "value": value, "color": colour})
+        return out
 
     def check_long_entry(self) -> int:
         return 1 if self._state.pending_long is not None else 0

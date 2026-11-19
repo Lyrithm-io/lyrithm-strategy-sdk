@@ -12,6 +12,12 @@ Sister-repo changelogs: `lyrithm-core` / `lyrithm-dashboard` / `lyrithm-sandbox`
 
 4 commits ahead of `main`'s last pushed state, queued for the next deploy wave.
 
+### Added — Pine `plot()` and `color.*`
+
+- `plot(series, title=None, color=None, ...)` records this bar's value for the chart; `PineStrategy.get_plots()` returns the bar's values in the order the plots first appeared (`name`, `value` — None for `na` or not reached this bar — and `color`). Untitled plots are "Plot", "Plot 2", ...; one call site is one plot, as in Pine; at most `MAX_PLOTS` (16). Width, style and other arguments are accepted and ignored. Plotting never touches the signal state.
+- `color.*`: Pine v5's named colours as hex, `color.new(c, transp)` and `color.rgb(r, g, b, transp)` → `#RRGGBB`, or `#RRGGBBAA` with transparency.
+- `lyrithm-core`'s transpiler imports `plot` / `color` only for scripts that use them, so strategies already transpiled keep working on an older runtime.
+
 ### Added — API-004 public API contract + semver policy (2026-06-12)
 
 - **`VERSIONING.md`** — defines the public surface (import surface, `Strategy` contract,
